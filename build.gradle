@@ -1,0 +1,53 @@
+buildscript {
+
+    repositories {
+        maven { url "https://dl.bintray.com/jetbrains/kotlin-native-dependencies" }
+        maven { url "https://dl.bintray.com/kotlin/kotlin-dev/" }
+        maven { url "https://dl.bintray.com/kotlin/kotlin-eap" }
+
+        google()
+        jcenter()
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-native-gradle-plugin:1.3.11"
+        classpath "org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlin_version"
+        classpath "org.jetbrains.kotlin:kotlin-serialization:$kotlin_version"
+        classpath "com.android.tools.build:gradle:$gradle_android_version"
+    }
+}
+
+allprojects {
+    repositories {
+        maven { url "https://kotlin.bintray.com/kotlinx" }
+        maven { url "https://kotlin.bintray.com/ktor" }
+        google()
+        jcenter()
+    }
+}
+
+def localRepo = rootProject.file('build/.m2-local')
+
+task clean {
+    doLast {
+        delete(localRepo)
+    }
+}
+
+task buildSh(type: Exec) {
+    errorOutput = System.out
+    ignoreExitValue = true
+    workingDir projectDir
+    enabled = true
+    commandLine "$projectDir/build.sh"
+}
+
+task buildSamplesWithPlatformLibs() {
+
+    dependsOn ':common:assemble'
+    dependsOn ':iosApp:assemble'
+}
+
+task buildAll {
+    dependsOn ':app:buildApk'
+    dependsOn ':ios:build'
+}

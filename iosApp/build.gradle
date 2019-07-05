@@ -1,0 +1,137 @@
+
+buildscript {
+    repositories {
+        mavenCentral()
+        jcenter()
+        maven { url "https://dl.bintray.com/jetbrains/kotlin-native-dependencies" }
+        maven { url "https://dl.bintray.com/kotlin/kotlin-eap" }
+    }
+    dependencies {
+        classpath "org.jetbrains.kotlin:kotlin-native-gradle-plugin:1.3.31"
+    }
+}
+plugins {
+    id 'kotlin-multiplatform' version '1.3.10'
+}
+allprojects {
+    repositories {
+        jcenter()
+    }
+}
+
+kotlin {
+    targets {
+        fromPreset(determinePreset(), 'ios') {
+            compilations.main {
+                outputKinds('EXECUTABLE')
+                entryPoint = 'com.vcoolish.calculator'
+            }
+        }
+    }
+}
+apply plugin: 'konan'
+
+konan.targets = ["ios_arm64", "ios_x64"]
+
+konanArtifacts {
+
+    interop ('objc') {
+        defFile 'src/main/c_interop/objc.def'
+        artifactName 'objc'
+    }
+
+    program ('app') {
+        enableMultiplatform true
+        srcFiles fileTree('src/main/kotlin/')
+        srcFiles fileTree('../app/src/commonMain/kotlin/com/vcoolish/calculator')
+        srcFiles fileTree('../app/src/iosMain/kotlin/com/vcoolish/calculator')
+
+        libraries {
+            artifact 'objc'
+        }
+    }
+}
+
+task packForXCode() {
+    final String sdkName = System.getenv("SDK_NAME") ?: ""
+    final String targetBuildDir = System.getenv("TARGET_BUILD_DIR") ?: ""
+    final String executablePath = System.getenv("EXECUTABLE_PATH") ?: ""
+
+    final def compileTask
+    if (sdkName.startsWith("iphonesimulator")) {
+        compileTask = tasks.compileKonanAppIos_x64
+    } else if (sdkName.startsWith("iphoneos")) {
+        compileTask = tasks.compileKonanAppIos_arm64
+    } else {
+        if (sdkName != "") println "unknown SDK: $sdkName"
+        compileTask = null
+    }
+
+    outputs.upToDateWhen { false }
+
+    if (compileTask == null) {
+        doLast { throw new Error("Please run the task from XCode") }
+    } else {
+        dependsOn compileTask
+
+        doLast {
+            final File compiledProgram = compileTask.artifact
+            final File destination = new File(targetBuildDir, executablePath)
+
+            delete(destination)
+            destination.parentFile?.mkdirs()
+
+            //probably the ugliest way to copy files with Groovy
+            destination.bytes = compiledProgram.bytes
+            destination.setExecutable(true, true)
+
+            println "Source file: $compiledProgram"
+            println "Destination file: $destination"
+        }
+    }
+}
+
+// If custom preset specified in 'uikit.preset.name' property, then use it for building.
+// Otherwise build for iPhone simulator (by default).
+private def determinePreset() {
+    String presetName = project.hasProperty('iosApp.preset.name') ? project.properties['iosApp.preset.name'] : 'iosX64'
+    def preset = project.kotlin.presets[presetName]
+    println("$project has been configured for $presetName platform.")
+    preset
+}
+
+task startSimulator(type: Exec) {
+    workingDir '.'
+    executable "sh"
+    args "-c", 'open /Applications/Xcode.app/Contents/Developer/Applications/Simulator.app'
+}
+
+task shutdownSimulator(type: Exec) {
+    workingDir '.'
+    executable "sh"
+    args "-c", "xcrun simctl shutdown booted"
+}
+
+final File xcode_project = file("iosApp.xcodeproj")
+final String xcode_app_name = "iosApp"
+final String xcode_bundle_id = "com.vcoolish.calculator"
+final File xcode_derivedDataPath = file("$buildDir/xcode-build")
+
+task buildXcode(type: Exec, dependsOn: [build, startSimulator]) {
+    workingDir file("$xcode_project")
+    executable "sh"
+    args "-c", "xcrun xcodebuild -scheme $xcode_app_name -project . -configuration Debug -destination 'platform=iOS Simulator,name=iPhone X,OS=latest' -derivedDataPath $xcode_derivedDataPath"
+}
+
+task installSimulator(type: Exec, dependsOn: [buildXcode]) {
+    workingDir project.rootDir
+    executable "sh"
+    def appFolder = new File(xcode_derivedDataPath, "/Build/Products/Debug-iphonesimulator/${xcode_app_name}.app")
+    args "-c", "xcrun simctl install booted '${appFolder.absolutePath}'"
+}
+
+task launchSimulator(type: Exec, dependsOn: [installSimulator]) {
+    workingDir file("$xcode_project")
+    executable "sh"
+    args "-c", "xcrun simctl launch booted $xcode_bundle_id"
+}
